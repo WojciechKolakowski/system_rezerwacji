@@ -1,0 +1,8 @@
+{
+  "name": "system-rezerwacji",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

@@ -38,7 +38,9 @@ erDiagram
     EMPLOYEE ||--o{ EMPLOYEE_AVAILABILITY : "ma"
     EMPLOYEE ||--o{ AVAILABILITY_EXCEPTION : "ma"
     DISTRICT ||--o{ PRICING_RULE : "ma"
+    SERVICE_TYPE ||--o{ PRICING_RULE : "ma"
     DISTRICT ||--o{ BOOKING : "dotyczy"
+    SERVICE_TYPE ||--o{ BOOKING : "dotyczy"
     EMPLOYEE ||--o{ BOOKING : "realizuje"
     PROPERTY_ADDRESS ||--o{ BOOKING : "adres zlecenia"
     CLIENT_PROFILE ||--o{ BOOKING : "zleca"
@@ -64,8 +66,10 @@ erDiagram
 - Konto jest **wymagane** przed pierwszą rezerwacją — brak ścieżki "rezerwacja jako gość".
 
 **PropertyAddress** (Adres nieruchomości) — klient może zapisać wiele adresów na koncie
-(`clientId`, etykieta, ulica/nr, dzielnica, ewentualnie domyślne m²) i wybrać jeden z listy przy
-kolejnych rezerwacjach zamiast wpisywać go od nowa.
+(`clientId`, etykieta, ulica/nr, `districtId`, ewentualnie domyślne m²) i wybrać jeden z listy
+przy kolejnych rezerwacjach zamiast wpisywać go od nowa. **Dzielnica jest atrybutem adresu**
+(adres fizycznie leży w konkretnej dzielnicy) — przy wyborze zapisanego adresu `districtId` w
+rezerwacji ustawia się automatycznie z adresu, klient nie wybiera dzielnicy osobno.
 
 **Employee** (1:1 z User, role=WORKER) — dane pracownika.
 
@@ -79,26 +83,40 @@ dzielnicy — model celowo nie zakłada przemieszczania się między dzielnicami
 konkretnej daty: `employeeId`, `date`, `type: DAY_OFF | CUSTOM_HOURS`, opcjonalnie
 `startTime/endTime` przy `CUSTOM_HOURS` (np. urlop, L4, skrócony dzień pracy).
 
+**ServiceType** (Rodzaj usługi) — osobna tabela edytowalna przez admina (np. "standardowe",
+"generalne/po remoncie"), nie sztywny enum w kodzie — spójne z tym, że reszta cennika też jest
+w pełni konfigurowalna z panelu, bez potrzeby wdrożenia nowej wersji kodu przy dodaniu rodzaju
+usługi.
+
 **PricingRule** (Cennik) — stawka i czas trwania wizyty zależne łącznie od `districtId`,
-`serviceType` i przedziału `sizeM2From–sizeM2To`: pola `price` oraz `durationMinutes`
+`serviceTypeId` i przedziału `sizeM2From–sizeM2To`: pola `price` oraz `durationMinutes`
 (np. do 50 m² → X minut, 50–65 m² → Y minut, 65–75 m² → Z minut, itd. — ta sama logika
 przedziałowa napędza jednocześnie cenę i długość okienka w kalendarzu pracownika).
 
-**Settings** — pojedynczy rekord konfiguracyjny, m.in. `individualQuoteThresholdM2` (próg m²,
-domyślnie 50, edytowalny przez admina).
+**Settings** — pojedynczy rekord konfiguracyjny:
+- `individualQuoteThresholdM2` (próg m², domyślnie 50, edytowalny przez admina)
+- `operationalLockWindowHours` (domyślnie 24h, edytowalny przez admina) — po przekroczeniu tego
+  progu przed wizytą przycisk samoobsługowej anulacji w koncie klienta jest wyszarzony
+- `partialRefundPercentage` (domyślnie 50%, edytowalny przez admina) — procent zwrotu przy
+  anulacji "po zamknięciu okna operacyjnego", ale **tylko** gdy rezerwacja nie podlega już
+  ustawowemu prawu odstąpienia (patrz niżej)
+- ustawowy termin odstąpienia konsumenta (14 dni, art. 27 ustawy o prawach konsumenta) jest
+  **stałą aplikacyjną, nieedytowalną przez admina** (świadomie brak pola w Settings — to wymóg
+  prawny, nie parametr biznesowy; admin nie powinien mieć możliwości przypadkowego złamania
+  prawa poprzez zmianę tej wartości)
 
 **Booking** (Zlecenie)
 - `clientId`, `employeeId` (przypisany automatycznie lub ręcznie), `districtId`,
   `propertyAddressId`, `serviceType`, `sizeM2`, `scheduledStart/End` (długość wyliczona z
-  `PricingRule.durationMinutes` w momencie rezerwacji), `price`
+  `PricingRule.durationMinutes` w momencie rezerwacji), `price`, `createdAt`
 - `status: PENDING | CONFIRMED | COMPLETED | CANCELLED | ISSUE`
 - `source: ONLINE_STANDARD | RECURRING_GENERATED | FROM_QUOTE | ADMIN_MANUAL`
 - `recurringSeriesId` (nullable) — powiązanie z serią, jeśli wygenerowane cyklicznie
 - pola potwierdzenia realizacji: `completedAt`, `completionNote`, `completionPhotoUrl`
-- pola anulacji: `cancelledAt`, `cancelledBy` — anulacja klienta do 24h przed wizytą jest
-  bezpłatna i uruchamia **automatyczny** zwrot płatności; status `ISSUE` służy do ręcznego
-  oznaczenia przez admina sytuacji spornej (np. pracownik się nie stawił) — zwrot w takim
-  przypadku admin zatwierdza ręcznie, nie automatycznie.
+- pola anulacji: `cancelledAt`, `cancelledBy`, `statutoryWithdrawalEligibleAtCancellation`
+  (boolean, nullable — snapshot wyniku reguły ustawowej **w momencie zgłoszenia anulacji**;
+  status `ISSUE` służy osobno do ręcznego oznaczenia przez admina sytuacji spornej, np.
+  pracownik się nie stawił — patrz sekcja 5 pkt 4 dla pełnej logiki zwrotu)
 
 **ChecklistTemplateItem** — jeden globalny szablon checklisty, edytowalny przez admina w
 panelu (treść pozycji, kolejność, aktywność). Przy tworzeniu `Booking` pozycje szablonu są
@@ -114,16 +132,22 @@ checklisty już utworzonych zleceń.
   `createdBy: CLIENT | ADMIN` — z serii generowane są kolejne pojedyncze `Booking`.
 
 **QuoteRequest** (Zapytanie o indywidualną wycenę) — osobna encja/status, niezależna od
-standardowego `Booking`: dane kontaktowe, opis nieruchomości, `sizeM2`, `districtId`,
-`status: NEW | IN_REVIEW | QUOTED | CONVERTED | REJECTED`, `quotedPrice`,
-`convertedBookingId`. To tutaj admin ręcznie decyduje o ewentualnej większej ekipie —
-nie modelujemy encji "zespół" w MVP.
+standardowego `Booking`. **Nie wymaga zalogowania** — to lekki formularz kontaktowy (niższy próg
+wejścia dla dużych nieruchomości), więc `clientId` jest **nullable**, a dane kontaktowe
+(`contactName`, `contactPhone`, `contactEmail`) są zbierane wprost w formularzu niezależnie od
+tego, czy zgłaszający ma już konto. Dalej: opis nieruchomości, `sizeM2`, `districtId`,
+`status: NEW | IN_REVIEW | QUOTED | CONVERTED | REJECTED`, `quotedPrice`, `convertedBookingId`.
+To tutaj admin ręcznie decyduje o ewentualnej większej ekipie — nie modelujemy encji "zespół" w
+MVP.
 
 **Payment** — zawsze **pełna kwota z góry** przy standardowej rezerwacji (bez zadatków/dowolnych
 kwot w MVP). `bookingId` jest **nullable** celowo: przyszły moduł faktur dla stałych klientów
 (płatność BLIK niepowiązana ze standardową rezerwacją online) nie będzie wymagał zmiany modelu.
-`provider`, `providerPaymentId`, `status: PENDING | PAID | REFUNDED | FAILED`, `amount`,
-`type: BOOKING_PAYMENT | INVOICE (przyszłość)`, `refundedAt`, `refundReason`.
+`provider`, `providerPaymentId`, `status: PENDING | PAID | REFUNDED | PARTIALLY_REFUNDED | FAILED`,
+`amount`, `type: BOOKING_PAYMENT | INVOICE (przyszłość)`, `refundedAt`, `refundPercentage`
+(nullable — 100 albo `partialRefundPercentage` z Settings), `refundType: FULL_SELF_SERVICE |
+FULL_STATUTORY_RIGHT | PARTIAL_POLICY | MANUAL_ISSUE` (nullable), `refundReason` (notatka admina,
+istotna zwłaszcza przy `MANUAL_ISSUE`).
 
 **Review** (Ocena) — `bookingId`, `rating`, `comment`, jeden per zakończone zlecenie.
 
@@ -144,8 +168,11 @@ kwot w MVP). `bookingId` jest **nullable** celowo: przyszły moduł faktur dla s
    przypisanie automatyczne, bez wyboru.
 5. Płatność online od razu, pełna kwota → utworzenie `Booking(status=CONFIRMED)` →
    potwierdzenie.
-6. Klient może anulować bezpłatnie do 24h przed wizytą — system automatycznie inicjuje zwrot
-   płatności i ustawia `Booking.status = CANCELLED`.
+6. Anulacja — patrz pełna logika w sekcji 5 pkt 4 (dwa niezależne progi: okno operacyjne 24h i
+   ustawowe prawo odstąpienia 14 dni). W skrócie: do `operationalLockWindowHours` przed wizytą
+   klient anuluje samoobsługowo, zwrot 100% automatyczny; po tym progu przycisk jest wyszarzony,
+   a decyzję (pełny zwrot z mocy prawa albo potrącenie wg `partialRefundPercentage`) podejmuje
+   admin na podstawie flagi wyliczonej przez system.
 7. Po realizacji: klient może wystawić `Review`.
 
 ### Klient — ścieżka cykliczna (tylko status `TRUSTED_RECURRING`)
@@ -222,7 +249,31 @@ powyżej — nie są to już otwarte pytania.
    dowolnych kwot w MVP.
 3. **Checklista:** jeden globalny szablon (`ChecklistTemplateItem`), edytowalny przez admina;
    kopiowany do konkretnego zlecenia w momencie jego utworzenia.
-4. **Anulacja:** bezpłatna do 24h przed wizytą, ze zwrotem płatności **automatycznym**.
+4. **Anulacja i zwrot — dwa niezależne progi, nie jedna sztywna reguła:**
+   - `operationalLockWindowHours` (domyślnie 24h przed wizytą, edytowalne w Settings) — próg
+     **operacyjny**: do tego momentu klient anuluje samoobsługowo w koncie, zwrot **100%
+     automatyczny**. Po przekroczeniu progu przycisk anulacji w panelu klienta jest wyszarzony,
+     z komunikatem kierującym do kontaktu z administratorem (bez podawania z góry wysokości
+     zwrotu w UI — bo zależy to od pkt niżej).
+   - `statutoryWithdrawalDays` = **14 dni od zawarcia umowy** (czyli od `Booking.createdAt`,
+     nie od terminu wizyty) — **ustawowe** prawo odstąpienia konsumenta (art. 27 ustawy o
+     prawach konsumenta), stała aplikacyjna, **nieedytowalna** przez admina.
+   - Logika po stronie systemu, gdy klient zgłasza anulację **po** zamknięciu okna
+     operacyjnego: jeśli od utworzenia rezerwacji minęło mniej niż `statutoryWithdrawalDays`,
+     system oznacza rezerwację flagą **"podlega ustawowemu prawu odstąpienia — należny pełny
+     zwrot"** w panelu admina (admin obsługuje ręcznie, ale system wskazuje mu jednoznacznie
+     wymagany wynik, nie zostawia tego "na oko"); jeśli minęło więcej — flaga **"poza okresem
+     ochronnym — możliwe potrącenie zgodnie z regulaminem"**, a zwrot = `partialRefundPercentage`.
+   - Wynik tej reguły jest zapisywany jako snapshot na `Booking.statutoryWithdrawalEligibleAtCancellation`
+     w momencie zgłoszenia anulacji (nie przeliczany później retroaktywnie), a faktycznie
+     wykonany zwrot opisuje `Payment.refundType` / `refundPercentage`.
+   - Rekompensata dla pracownika za "puste okno" w grafiku przy anulacjach objętych pełnym
+     zwrotem klienta to **osobny, niepowiązany mechanizm** (nie wpływa na logikę zwrotu klienta)
+     — świadomie odłożony poza zakres MVP, do rozważenia w dalszych etapach.
+   - ⚠️ Zakres ustawowego prawa odstąpienia dla usług sprzątania (czy nie zachodzi tu któryś z
+     wyjątków z art. 38 ustawy o prawach konsumenta) warto potwierdzić z prawnikiem przed
+     wdrożeniem produkcyjnym — model danych jest przygotowany na obie interpretacje, ale sama
+     reguła prawna nie jest tu przez nas asertowana jako pewnik.
 5. **Niewykonanie usługi:** admin ręcznie oznacza zlecenie jako `ISSUE` i ręcznie decyduje o
    zwrocie — brak automatyzacji dla tego przypadku (celowo odróżnione od zwrotu przy zwykłej
    anulacji).

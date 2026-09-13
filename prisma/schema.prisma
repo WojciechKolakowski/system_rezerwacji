@@ -1,0 +1,485 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  CLIENT
+  ADMIN
+  WORKER
+}
+
+enum ClientStatus {
+  STANDARD
+  TRUSTED_RECURRING
+}
+
+enum AvailabilityExceptionType {
+  DAY_OFF
+  CUSTOM_HOURS
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  ISSUE
+}
+
+enum BookingSource {
+  ONLINE_STANDARD
+  RECURRING_GENERATED
+  FROM_QUOTE
+  ADMIN_MANUAL
+}
+
+enum CancelledBy {
+  CLIENT
+  ADMIN
+}
+
+enum RecurringFrequency {
+  WEEKLY
+  BIWEEKLY
+}
+
+enum RecurringStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+}
+
+enum RecurringCreatedBy {
+  CLIENT
+  ADMIN
+}
+
+enum QuoteRequestStatus {
+  NEW
+  IN_REVIEW
+  QUOTED
+  CONVERTED
+  REJECTED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  REFUNDED
+  PARTIALLY_REFUNDED
+  FAILED
+}
+
+enum PaymentType {
+  BOOKING_PAYMENT
+  INVOICE
+}
+
+// Wynik reguły anulacji/zwrotu faktycznie zastosowany do danej płatności —
+// patrz ARCHITEKTURA.md sekcja 5 pkt 4 (dwa niezależne progi: okno operacyjne
+// i ustawowe prawo odstąpienia).
+enum RefundType {
+  FULL_SELF_SERVICE
+  FULL_STATUTORY_RIGHT
+  PARTIAL_POLICY
+  MANUAL_ISSUE
+}
+
+// ---------------------------------------------------------------------------
+// Konta i role
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  phone        String?
+  passwordHash String
+  role         Role
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  clientProfile ClientProfile?
+  employee      Employee?
+
+  @@map("users")
+}
+
+model ClientProfile {
+  id                    String       @id @default(cuid())
+  userId                String       @unique
+  user                  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status                ClientStatus @default(STANDARD)
+  // Zgoda marketingowa RODO na SMS-y — niezależna od transakcyjnych
+  // przypomnień/potwierdzeń, które jej nie wymagają.
+  marketingSmsConsent   Boolean      @default(false)
+  marketingSmsConsentAt DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  addresses       PropertyAddress[]
+  bookings        Booking[]
+  recurringSeries RecurringSeries[]
+  quoteRequests   QuoteRequest[]
+  payments        Payment[]
+  reviews         Review[]
+
+  @@map("client_profiles")
+}
+
+// Klient może zapisać wiele adresów. Dzielnica jest atrybutem adresu
+// (adres fizycznie leży w konkretnej dzielnicy) — przy wyborze zapisanego
+// adresu districtId w rezerwacji ustawia się automatycznie z adresu.
+model PropertyAddress {
+  id            String        @id @default(cuid())
+  clientId      String
+  client        ClientProfile @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  label         String
+  districtId    String
+  district      District      @relation(fields: [districtId], references: [id])
+  street        String
+  buildingNo    String
+  apartmentNo   String?
+  postalCode    String
+  city          String
+  defaultSizeM2 Int?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  bookings        Booking[]
+  recurringSeries RecurringSeries[]
+
+  @@index([clientId])
+  @@index([districtId])
+  @@map("property_addresses")
+}
+
+model Employee {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  availability           EmployeeAvailability[]
+  availabilityExceptions AvailabilityException[]
+  bookings               Booking[]
+  preferredForSeries     RecurringSeries[]
+
+  @@map("employees")
+}
+
+// ---------------------------------------------------------------------------
+// Dzielnice, dostępność, cennik
+// ---------------------------------------------------------------------------
+
+model District {
+  id        String   @id @default(cuid())
+  name      String
+  city      String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  addresses       PropertyAddress[]
+  availability    EmployeeAvailability[]
+  pricingRules    PricingRule[]
+  bookings        Booking[]
+  recurringSeries RecurringSeries[]
+  quoteRequests   QuoteRequest[]
+
+  @@unique([name, city])
+  @@map("districts")
+}
+
+// Cykliczny harmonogram tygodniowy. Jeden pracownik w danym terminie
+// pracuje w JEDNEJ dzielnicy — model celowo nie zakłada przemieszczania się
+// między dzielnicami w ciągu dnia.
+model EmployeeAvailability {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  districtId String
+  district   District @relation(fields: [districtId], references: [id])
+  dayOfWeek  Int // 0 = niedziela ... 6 = sobota
+  startTime  DateTime @db.Time
+  endTime    DateTime @db.Time
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([employeeId])
+  @@index([districtId, dayOfWeek])
+  @@map("employee_availability")
+}
+
+// Nadpisuje harmonogram tygodniowy dla konkretnej daty (urlop, L4, skrócony
+// dzień pracy) — niezależnie od EmployeeAvailability.
+model AvailabilityException {
+  id         String                    @id @default(cuid())
+  employeeId String
+  employee   Employee                  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date       DateTime                  @db.Date
+  type       AvailabilityExceptionType
+  startTime  DateTime?                 @db.Time
+  endTime    DateTime?                 @db.Time
+  note       String?
+  createdAt  DateTime                  @default(now())
+
+  @@unique([employeeId, date])
+  @@map("availability_exceptions")
+}
+
+// Osobna tabela edytowalna przez admina (np. "standardowe", "generalne/po
+// remoncie") — nie sztywny enum, spójnie z resztą cennika konfigurowalnego
+// z panelu bez wdrożenia nowej wersji kodu.
+model ServiceType {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pricingRules    PricingRule[]
+  bookings        Booking[]
+  recurringSeries RecurringSeries[]
+
+  @@map("service_types")
+}
+
+// Stawka i czas trwania wizyty zależne łącznie od dzielnicy, rodzaju usługi
+// i przedziału m² — ta sama logika przedziałowa napędza jednocześnie cenę i
+// długość okienka w kalendarzu pracownika.
+model PricingRule {
+  id              String      @id @default(cuid())
+  districtId      String
+  district        District    @relation(fields: [districtId], references: [id])
+  serviceTypeId   String
+  serviceType     ServiceType @relation(fields: [serviceTypeId], references: [id])
+  sizeM2From      Int
+  sizeM2To        Int
+  price           Decimal     @db.Decimal(10, 2)
+  durationMinutes Int
+  active          Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([districtId, serviceTypeId])
+  @@map("pricing_rules")
+}
+
+// Pojedynczy rekord konfiguracyjny (singleton, id zawsze = 1).
+model Settings {
+  id                         Int      @id @default(1)
+  individualQuoteThresholdM2 Int      @default(50)
+  // Próg operacyjny: do tylu godzin przed wizytą klient anuluje
+  // samoobsługowo, zwrot 100% automatyczny. Po przekroczeniu — przycisk w
+  // panelu klienta wyszarzony.
+  operationalLockWindowHours Int      @default(24)
+  // Procent zwrotu przy anulacji po zamknięciu okna operacyjnego, o ile
+  // rezerwacja nie podlega już ustawowemu prawu odstąpienia (patrz
+  // RefundType.FULL_STATUTORY_RIGHT).
+  partialRefundPercentage    Int      @default(50)
+  updatedAt                  DateTime @updatedAt
+
+  // Uwaga: ustawowy termin odstąpienia konsumenta (14 dni, art. 27 ustawy o
+  // prawach konsumenta) jest CELOWO nieobecny w tej tabeli — to stała
+  // aplikacyjna (patrz packages/shared), nieedytowalna przez admina, żeby
+  // wykluczyć przypadkowe złamanie prawa przy zmianie ustawień.
+
+  @@map("settings")
+}
+
+// ---------------------------------------------------------------------------
+// Zlecenia
+// ---------------------------------------------------------------------------
+
+// Jeden globalny szablon checklisty, edytowalny przez admina. Przy
+// utworzeniu Booking pozycje są kopiowane do BookingChecklistItem (snapshot),
+// więc późniejsza edycja szablonu nie zmienia checklisty istniejących zleceń.
+model ChecklistTemplateItem {
+  id        String   @id @default(cuid())
+  label     String
+  sortOrder Int
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("checklist_template_items")
+}
+
+model Booking {
+  id                String           @id @default(cuid())
+  clientId          String
+  client            ClientProfile    @relation(fields: [clientId], references: [id])
+  employeeId        String?
+  employee          Employee?        @relation(fields: [employeeId], references: [id])
+  districtId        String
+  district          District         @relation(fields: [districtId], references: [id])
+  propertyAddressId String
+  propertyAddress   PropertyAddress  @relation(fields: [propertyAddressId], references: [id])
+  serviceTypeId     String
+  serviceType       ServiceType      @relation(fields: [serviceTypeId], references: [id])
+  sizeM2            Int
+  scheduledStart    DateTime
+  scheduledEnd      DateTime
+  // Snapshot ceny z PricingRule w momencie rezerwacji — późniejsza zmiana
+  // cennika nie zmienia ceny już złożonych zleceń.
+  price             Decimal          @db.Decimal(10, 2)
+  status            BookingStatus    @default(PENDING)
+  source            BookingSource
+  recurringSeriesId String?
+  recurringSeries   RecurringSeries? @relation(fields: [recurringSeriesId], references: [id])
+
+  // Potwierdzenie realizacji przez pracownika
+  completedAt        DateTime?
+  completionNote     String?
+  completionPhotoUrl String?
+
+  // Anulacja — patrz ARCHITEKTURA.md sekcja 5 pkt 4 dla pełnej logiki
+  cancelledAt                               DateTime?
+  cancelledBy                               CancelledBy?
+  // Snapshot wyniku reguły ustawowej w momencie zgłoszenia anulacji (nie
+  // przeliczany retroaktywnie później, gdyby stała prawna się zmieniła).
+  statutoryWithdrawalEligibleAtCancellation Boolean?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  checklistItems BookingChecklistItem[]
+  review         Review?
+  payments       Payment[]
+  quoteRequest   QuoteRequest?
+
+  @@index([clientId])
+  @@index([employeeId])
+  @@index([districtId])
+  @@index([scheduledStart])
+  @@map("bookings")
+}
+
+model BookingChecklistItem {
+  id          String    @id @default(cuid())
+  bookingId   String
+  booking     Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  // Skopiowane z ChecklistTemplateItem w momencie utworzenia Booking.
+  label       String
+  sortOrder   Int
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+
+  @@index([bookingId])
+  @@map("booking_checklist_items")
+}
+
+// Seria/subskrypcja cykliczna, z której generowane są kolejne pojedyncze
+// Booking (cron, z miesięcznym wyprzedzeniem względem bieżącej daty).
+model RecurringSeries {
+  id                  String             @id @default(cuid())
+  clientId            String
+  client              ClientProfile      @relation(fields: [clientId], references: [id])
+  propertyAddressId   String
+  propertyAddress     PropertyAddress    @relation(fields: [propertyAddressId], references: [id])
+  districtId          String
+  district            District           @relation(fields: [districtId], references: [id])
+  serviceTypeId       String
+  serviceType         ServiceType        @relation(fields: [serviceTypeId], references: [id])
+  preferredEmployeeId String?
+  preferredEmployee   Employee?          @relation(fields: [preferredEmployeeId], references: [id])
+  frequency           RecurringFrequency
+  preferredDayOfWeek  Int
+  preferredStartTime  DateTime           @db.Time
+  sizeM2              Int
+  status              RecurringStatus    @default(ACTIVE)
+  createdBy           RecurringCreatedBy
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  bookings Booking[]
+
+  @@index([clientId])
+  @@index([status])
+  @@map("recurring_series")
+}
+
+// Zapytanie o indywidualną wycenę — NIE wymaga zalogowania (lekki formularz
+// kontaktowy, niższy próg wejścia dla dużych nieruchomości), więc clientId
+// jest nullable, a dane kontaktowe są zbierane wprost w formularzu.
+model QuoteRequest {
+  id                  String             @id @default(cuid())
+  clientId            String?
+  client              ClientProfile?     @relation(fields: [clientId], references: [id])
+  contactName         String
+  contactPhone        String
+  contactEmail        String
+  propertyDescription String
+  sizeM2              Int
+  districtId          String
+  district            District           @relation(fields: [districtId], references: [id])
+  status              QuoteRequestStatus @default(NEW)
+  quotedPrice         Decimal?           @db.Decimal(10, 2)
+  convertedBookingId  String?            @unique
+  convertedBooking    Booking?           @relation(fields: [convertedBookingId], references: [id])
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([clientId])
+  @@index([status])
+  @@map("quote_requests")
+}
+
+// ---------------------------------------------------------------------------
+// Płatności i oceny
+// ---------------------------------------------------------------------------
+
+// bookingId jest nullable celowo: przyszły moduł faktur dla stałych klientów
+// (płatność BLIK niepowiązana ze standardową rezerwacją online) nie będzie
+// wymagał zmiany modelu.
+model Payment {
+  id                String        @id @default(cuid())
+  bookingId         String?
+  booking           Booking?      @relation(fields: [bookingId], references: [id])
+  clientId          String
+  client            ClientProfile @relation(fields: [clientId], references: [id])
+  provider          String
+  providerPaymentId String
+  status            PaymentStatus @default(PENDING)
+  amount            Decimal       @db.Decimal(10, 2)
+  type              PaymentType   @default(BOOKING_PAYMENT)
+
+  refundedAt       DateTime?
+  refundPercentage Int?
+  refundType       RefundType?
+  refundReason     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([bookingId])
+  @@index([clientId])
+  @@map("payments")
+}
+
+model Review {
+  id        String        @id @default(cuid())
+  bookingId String        @unique
+  booking   Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  clientId  String
+  client    ClientProfile @relation(fields: [clientId], references: [id])
+  rating    Int
+  comment   String?
+  createdAt DateTime      @default(now())
+
+  @@index([clientId])
+  @@map("reviews")
+}

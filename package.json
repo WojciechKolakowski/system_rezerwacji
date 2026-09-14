@@ -5,6 +5,9 @@
     "apps/*",
     "packages/*"
   ],
+  "scripts": {
+    "test": "npm run test --workspace=packages/shared"
+  },
   "devDependencies": {
     "@prisma/client": "^6.19.3",
     "prisma": "^6.19.3"

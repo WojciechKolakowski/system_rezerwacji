@@ -52,18 +52,59 @@ erDiagram
     BOOKING ||--o| PAYMENT : "może mieć"
     QUOTE_REQUEST ||--o| BOOKING : "po akceptacji staje się"
     CLIENT_PROFILE ||--o{ QUOTE_REQUEST : "składa"
+    CLIENT_PROFILE ||--o{ ONBOARDING_REQUEST : "składa"
+    PROPERTY_ADDRESS ||--o{ ONBOARDING_REQUEST : "adres do spotkania"
 ```
 
 ### Encje
 
-**User** — wspólna tabela kont, `role: CLIENT | ADMIN | WORKER`, dane logowania.
+**User** — wspólna tabela kont, `role: CLIENT | ADMIN | WORKER`, dane logowania. `passwordHash`
+jest **nullable** — obsługuje konta zaproszone przez admina (patrz niżej), które istnieją, zanim
+klient sam ustawi hasło. Pola zaproszenia: `inviteToken` (unikalny, do linku "ustaw hasło"),
+`inviteTokenExpiresAt`, `invitedAt`, `invitedById` (który admin zaprosił).
 
 **ClientProfile** (1:1 z User, role=CLIENT)
-- `status: STANDARD | TRUSTED_RECURRING` — ustawiane wyłącznie ręcznie przez admina; odblokowuje
-  opcję rezerwacji cyklicznej w koncie klienta.
+- `status: PENDING_VERIFICATION | STANDARD | TRUSTED_RECURRING` — **kluczowa zmiana**: nowy
+  klient NIE zaczyna od `STANDARD`. Domyślny status po rejestracji to `PENDING_VERIFICATION` —
+  w tym stanie klient ma konto i może się zalogować, ale **nie może** złożyć żadnej standardowej
+  rezerwacji online. Dopiero ręczne przejście do `STANDARD` przez admina (patrz `OnboardingRequest`
+  niżej) odblokowuje standardową ścieżkę rezerwacji; `TRUSTED_RECURRING` odblokowuje dodatkowo
+  rezerwacje cykliczne — to pozostaje bez zmian względem wcześniejszych ustaleń, tylko teraz jest
+  to trzeci, wyższy stopień zamiast drugiego.
+- `verifiedAt`, `verifiedById` (FK do `User` — admin) — kiedy i przez kogo klient został
+  przestawiony na `STANDARD`, niezależnie od tego, czy stało się to przez zatwierdzenie
+  `OnboardingRequest`, czy ręczną decyzją admina bez formalnego zgłoszenia (patrz niżej) — jedno
+  spójne pole audytowe dla obu ścieżek.
 - `marketingSmsConsent: boolean` + `marketingSmsConsentAt` — osobna zgoda RODO na SMS-y
   marketingowe, niezależna od transakcyjnych (potwierdzenia/przypomnienia nie jej wymagają).
-- Konto jest **wymagane** przed pierwszą rezerwacją — brak ścieżki "rezerwacja jako gość".
+- Konto jest **wymagane** przed pierwszą rezerwacją — brak ścieżki "rezerwacja jako gość". Nowe:
+  samo posiadanie konta już nie wystarcza — trzeba też mieć status `STANDARD` lub wyższy.
+
+**OnboardingRequest** (Zapytanie o rozpoczęcie współpracy) — **osobny typ zgłoszenia**, odrębny
+od `QuoteRequest` (ten dotyczy wyceny dużych nieruchomości, nie weryfikacji tożsamości/relacji
+z nowym klientem — różne powody, różne listy w panelu admina). Ścieżka standardowa:
+- Nowy klient zakłada konto (rejestracja z hasłem od razu — inaczej niż `QuoteRequest`, tu klient
+  **ma** konto już na starcie, tylko w statusie `PENDING_VERIFICATION`) i składa
+  `OnboardingRequest`: `clientId`, `propertyAddressId` (adres, pod którym ma się odbyć spotkanie),
+  opcjonalny `clientMessage` (opis potrzeb).
+- `status: NEW | MEETING_SCHEDULED | VISITED | APPROVED | REJECTED`.
+- `meetingScheduledAt` — termin spotkania fizycznego, widoczny w kalendarzu admina obok zleceń.
+- `conductedById` (FK do `User` — kto faktycznie przeprowadził spotkanie, admin lub pracownik).
+- `visitNotes` — notatka ze spotkania: wyposażenie, stan zabrudzenia nieruchomości, szczególne
+  uwarunkowania/zmienne istotne przy przyszłych zleceniach.
+- `approvedAt`, `approvedById` (FK do `User` — admin, który podjął decyzję), albo `rejectedAt` +
+  `rejectionReason`.
+- Zatwierdzenie (`APPROVED`) ustawia `ClientProfile.status = STANDARD` oraz
+  `verifiedAt`/`verifiedById`.
+
+**Druga, uproszczona ścieżka weryfikacji (bez formalnego zgłoszenia):** admin może ręcznie
+założyć konto klienta, podając tylko jego e-mail — `User` powstaje z `passwordHash = null` i
+`inviteToken`; klient dostaje e-mail z linkiem do ustawienia własnego hasła. Admin może od razu,
+niezależnie od tego czy `OnboardingRequest` w ogóle istnieje, ręcznie zmienić
+`ClientProfile.status` na `STANDARD` (np. dla poleconego klienta, znajomego, kontaktu
+telefonicznego) — `verifiedAt`/`verifiedById` ustawiane tak samo jak przy zatwierdzeniu
+zgłoszenia, więc panel admina ma jeden spójny widok "kto i kiedy zweryfikował danego klienta"
+niezależnie od tego, którą ścieżką to się stało.
 
 **PropertyAddress** (Adres nieruchomości) — klient może zapisać wiele adresów na koncie
 (`clientId`, etykieta, ulica/nr, `districtId`, ewentualnie domyślne m²) i wybrać jeden z listy
@@ -155,8 +196,24 @@ istotna zwłaszcza przy `MANUAL_ISSUE`).
 
 ## 3. Kluczowe przepływy (user flows)
 
-### Klient — ścieżka standardowa
-0. Logowanie/rejestracja (konto jest wymagane przed rezerwacją) → wybór zapisanego
+### Klient — weryfikacja nowego klienta (poprzedza jakąkolwiek rezerwację)
+1. Rejestracja (konto + hasło) **lub** klient loguje się do konta założonego wcześniej przez
+   admina (link z e-maila zaproszenia → ustawienie hasła). W obu przypadkach startowy status to
+   `PENDING_VERIFICATION`.
+2. W statusie `PENDING_VERIFICATION` klient **nie widzi** opcji standardowej rezerwacji — może
+   jedynie dodać adres nieruchomości i złożyć `OnboardingRequest` ("zapytanie o rozpoczęcie
+   współpracy").
+3. Admin ustala termin spotkania fizycznego pod wskazanym adresem (`meetingScheduledAt`,
+   widoczne w jego kalendarzu), po spotkaniu wpisuje `visitNotes` (wyposażenie, stan
+   zabrudzenia, uwarunkowania) i podejmuje decyzję: `APPROVED` → `ClientProfile.status =
+   STANDARD`, albo `REJECTED` (z powodem).
+4. Alternatywnie: admin ręcznie zmienia status klienta na `STANDARD` bez formalnego zgłoszenia
+   (np. klient polecony) — patrz opis w sekcji 2.
+5. Dopiero od tego momentu klient widzi i może korzystać ze standardowej ścieżki rezerwacji
+   (i, jeśli dodatkowo nadany, ze ścieżki cyklicznej — to kolejny, osobny próg jak dotychczas).
+
+### Klient — ścieżka standardowa (wymaga statusu `STANDARD` lub `TRUSTED_RECURRING`)
+0. Logowanie (konto i status `STANDARD`+ są wymagane przed rezerwacją) → wybór zapisanego
    `PropertyAddress` albo dodanie nowego.
 1. Wybór dzielnicy → podanie m² i rodzaju usługi (`serviceType`) nieruchomości.
 2. Jeśli `sizeM2 > individualQuoteThresholdM2` → przycisk "Indywidualna wycena" → formularz
@@ -190,9 +247,13 @@ istotna zwłaszcza przy `MANUAL_ISSUE`).
   progiem m², globalnym szablonem checklisty (`ChecklistTemplateItem`).
 - Zarządzanie pracownikami, ich `EmployeeAvailability` (cykliczny harmonogram per dzielnica) oraz
   `AvailabilityException` (urlopy/L4/zmiany godzin per dzień).
+- Lista `OnboardingRequest` (osobno od `QuoteRequest`) → planowanie spotkania fizycznego →
+  notatki z wizyty → zatwierdzenie (`STANDARD`) lub odrzucenie nowego klienta. Alternatywnie:
+  ręczne założenie konta klienta (e-mail → zaproszenie) i/lub ręczna zmiana statusu na
+  `STANDARD` bez formalnego zgłoszenia.
 - Lista `QuoteRequest` (osobno od zleceń standardowych) → ręczna wycena → ewentualna organizacja
   większej ekipy poza systemem → konwersja do `Booking`.
-- Nadawanie/cofanie statusu `TRUSTED_RECURRING` klientom.
+- Nadawanie/cofanie statusu `TRUSTED_RECURRING` klientom (wymaga uprzedniego `STANDARD`).
 - Ręczne tworzenie/edycja `RecurringSeries` dla klienta.
 - Podgląd i zarządzanie wszystkimi zleceniami (w tym generowanymi cyklicznie) i płatnościami;
   ręczne oznaczanie zlecenia jako `ISSUE` (np. pracownik się nie stawił) i ręczne zatwierdzanie
@@ -217,12 +278,16 @@ istotna zwłaszcza przy `MANUAL_ISSUE`).
 **Etap 0 — szkielet.** Trzy puste aplikacje wdrożone na subdomenach, schemat Prisma, logowanie
 i role, `packages/shared` z typami bazowymi. *(ten etap odpowiada obecnemu punktowi w repo)*
 
-**Etap 1 — MVP: ścieżka standardowa.**
+**Etap 1 — MVP: weryfikacja klienta + ścieżka standardowa.**
 Admin: CRUD dzielnic, cennika, dostępności pracowników, progu m².
-Klient: pełna ścieżka standardowa (wybór dzielnicy/m²/terminu, płatność online, potwierdzenie).
+Klient: rejestracja → `PENDING_VERIFICATION` → `OnboardingRequest` (albo ręczne
+zaproszenie/aktywacja przez admina) → po zatwierdzeniu (`STANDARD`) pełna ścieżka standardowa
+(wybór dzielnicy/m²/terminu, płatność online, potwierdzenie).
 Pracownik: "Mój dzień", checklista, potwierdzenie realizacji.
-Admin: podgląd zleceń i płatności.
+Admin: lista `OnboardingRequest` z planowaniem spotkań i notatkami, podgląd zleceń i płatności.
 → To jest pierwsza wersja, którą można realnie uruchomić komercyjnie dla jednoosobowych zleceń.
+Weryfikacja klienta musi wejść już tutaj, a nie w późniejszym etapie — bez niej nikt nowy nie
+może w ogóle skorzystać ze ścieżki standardowej.
 
 **Etap 2 — indywidualna wycena.** Formularz `QuoteRequest` po stronie klienta + panel obsługi
 zapytań i konwersji do zlecenia po stronie admina.
@@ -289,3 +354,13 @@ powyżej — nie są to już otwarte pytania.
     adapter (Przelewy24 / Tpay / Autopay do wyboru później, bez zmiany reszty systemu).
 12. **Powiadomienia SMS:** zbieramy osobną zgodę marketingową RODO (`marketingSmsConsent`) już od
     MVP, niezależną od transakcyjnych przypomnień/potwierdzeń, które jej nie wymagają.
+13. **Weryfikacja nowego klienta przed pierwszą rezerwacją (zmiana z 2026-09-14):** samo
+    założenie konta już nie wystarcza do złożenia standardowej rezerwacji. Nowy status
+    `PENDING_VERIFICATION` jest domyślny po rejestracji; dopiero ręczne przejście do `STANDARD`
+    (przez zatwierdzenie `OnboardingRequest` po spotkaniu fizycznym, albo bezpośrednią decyzją
+    admina bez formalnego zgłoszenia) odblokowuje ścieżkę standardową. `OnboardingRequest` to
+    **osobny typ zgłoszenia**, niezależny od `QuoteRequest` (inny powód, inna lista w adminie).
+    Admin może też sam założyć klientowi konto (e-mail → zaproszenie z linkiem do ustawienia
+    hasła) i od razu ręcznie go zweryfikować. Spotkanie fizyczne dokumentujemy w systemie:
+    termin (widoczny w kalendarzu admina), notatka o wyposażeniu/stanie nieruchomości/
+    uwarunkowaniach, oraz kto podjął decyzję i kiedy.

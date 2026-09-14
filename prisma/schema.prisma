@@ -18,9 +18,22 @@ enum Role {
   WORKER
 }
 
+// PENDING_VERIFICATION jest domyślnym stanem nowego klienta — dopiero ręczne
+// przejście do STANDARD (przez OnboardingRequest albo bezpośrednią decyzję
+// admina) odblokowuje standardową ścieżkę rezerwacji. Patrz ARCHITEKTURA.md
+// sekcja 5 pkt 13.
 enum ClientStatus {
+  PENDING_VERIFICATION
   STANDARD
   TRUSTED_RECURRING
+}
+
+enum OnboardingRequestStatus {
+  NEW
+  MEETING_SCHEDULED
+  VISITED
+  APPROVED
+  REJECTED
 }
 
 enum AvailabilityExceptionType {
@@ -103,36 +116,61 @@ model User {
   id           String   @id @default(cuid())
   email        String   @unique
   phone        String?
-  passwordHash String
+  // Nullable: obsługuje konta założone ręcznie przez admina (zaproszenie
+  // e-mailem), zanim klient sam ustawi hasło przez link.
+  passwordHash String?
   role         Role
   name         String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  clientProfile ClientProfile?
+  // Zaproszenie do ustawienia hasła (ścieżka: admin zakłada konto klienta).
+  inviteToken          String?   @unique
+  inviteTokenExpiresAt DateTime?
+  invitedAt            DateTime?
+  invitedById          String?
+  invitedBy            User?     @relation("UserInvites", fields: [invitedById], references: [id])
+  invitedUsers         User[]    @relation("UserInvites")
+
+  clientProfile ClientProfile? @relation("ClientProfileOwner")
   employee      Employee?
+
+  verifiedClientProfiles    ClientProfile[]     @relation("ClientProfileVerifier")
+  conductedOnboardingVisits OnboardingRequest[] @relation("OnboardingConductor")
+  approvedOnboardingReviews OnboardingRequest[] @relation("OnboardingApprover")
 
   @@map("users")
 }
 
 model ClientProfile {
-  id                    String       @id @default(cuid())
-  userId                String       @unique
-  user                  User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  status                ClientStatus @default(STANDARD)
+  id     String       @id @default(cuid())
+  userId String       @unique
+  user   User         @relation("ClientProfileOwner", fields: [userId], references: [id], onDelete: Cascade)
+  // PENDING_VERIFICATION jest domyślne — patrz komentarz przy enumie
+  // ClientStatus i ARCHITEKTURA.md sekcja 5 pkt 13.
+  status ClientStatus @default(PENDING_VERIFICATION)
+
+  // Kiedy i przez kogo klient przeszedł na STANDARD — niezależnie od tego,
+  // czy stało się to przez zatwierdzenie OnboardingRequest, czy ręczną
+  // decyzję admina bez formalnego zgłoszenia.
+  verifiedAt   DateTime?
+  verifiedById String?
+  verifiedBy   User?     @relation("ClientProfileVerifier", fields: [verifiedById], references: [id])
+
   // Zgoda marketingowa RODO na SMS-y — niezależna od transakcyjnych
   // przypomnień/potwierdzeń, które jej nie wymagają.
-  marketingSmsConsent   Boolean      @default(false)
+  marketingSmsConsent   Boolean   @default(false)
   marketingSmsConsentAt DateTime?
-  createdAt             DateTime     @default(now())
-  updatedAt             DateTime     @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-  addresses       PropertyAddress[]
-  bookings        Booking[]
-  recurringSeries RecurringSeries[]
-  quoteRequests   QuoteRequest[]
-  payments        Payment[]
-  reviews         Review[]
+  addresses          PropertyAddress[]
+  bookings           Booking[]
+  recurringSeries    RecurringSeries[]
+  quoteRequests      QuoteRequest[]
+  onboardingRequests OnboardingRequest[]
+  payments           Payment[]
+  reviews            Review[]
 
   @@map("client_profiles")
 }
@@ -156,8 +194,9 @@ model PropertyAddress {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  bookings        Booking[]
-  recurringSeries RecurringSeries[]
+  bookings           Booking[]
+  recurringSeries    RecurringSeries[]
+  onboardingRequests OnboardingRequest[]
 
   @@index([clientId])
   @@index([districtId])
@@ -437,6 +476,42 @@ model QuoteRequest {
   @@index([clientId])
   @@index([status])
   @@map("quote_requests")
+}
+
+// Zapytanie o rozpoczęcie współpracy — osobny typ zgłoszenia od QuoteRequest
+// (inny powód: weryfikacja nowego, nieznanego klienta przed dopuszczeniem go
+// do standardowej ścieżki rezerwacji, nie wycena dużej nieruchomości).
+// W przeciwieństwie do QuoteRequest WYMAGA konta — klient rejestruje się od
+// razu, tylko w statusie ClientStatus.PENDING_VERIFICATION.
+model OnboardingRequest {
+  id                String                  @id @default(cuid())
+  clientId          String
+  client            ClientProfile           @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  propertyAddressId String
+  propertyAddress   PropertyAddress         @relation(fields: [propertyAddressId], references: [id])
+  clientMessage     String?
+  status            OnboardingRequestStatus @default(NEW)
+
+  // Spotkanie fizyczne pod adresem — widoczne w kalendarzu admina obok zleceń.
+  meetingScheduledAt DateTime?
+  conductedById      String?
+  conductedBy        User?     @relation("OnboardingConductor", fields: [conductedById], references: [id])
+  // Wyposażenie, stan zabrudzenia nieruchomości, szczególne uwarunkowania/
+  // zmienne istotne przy przyszłych zleceniach.
+  visitNotes         String?
+
+  approvedAt      DateTime?
+  approvedById    String?
+  approvedBy      User?     @relation("OnboardingApprover", fields: [approvedById], references: [id])
+  rejectedAt      DateTime?
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([status])
+  @@map("onboarding_requests")
 }
 
 // ---------------------------------------------------------------------------

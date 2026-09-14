@@ -16,6 +16,13 @@ Konsumowane bezpośrednio jako TypeScript (bez kroku builda) przez Next.js (`tra
 - `recurring.ts` — generowanie dat kolejnych wystąpień `RecurringSeries` w oknie miesięcznym,
   idempotentne względem już istniejących zleceń.
 - `clientAccess.ts` — bramka `PENDING_VERIFICATION` / `STANDARD` / `TRUSTED_RECURRING`.
+- `onboarding.ts` — maszyna stanów `OnboardingRequest` (NEW → MEETING_SCHEDULED → VISITED →
+  APPROVED/REJECTED) i wspólna aktualizacja `ClientProfile` przy zatwierdzeniu (ten sam ślad
+  audytowy niezależnie od tego, czy zatwierdzenie idzie przez formalne zgłoszenie, czy ręczną
+  decyzję admina).
+- `invite.ts` — token zaproszenia dla kont zakładanych ręcznie przez admina (7 dni ważności).
+- `payments.ts` — kontrakt `PaymentProvider` niezależny od dostawcy (Przelewy24/Tpay/Autopay
+  jeszcze nie wybrany) + wyliczanie kwoty zwrotu z procentu.
 
 ## Testy
 

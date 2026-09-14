@@ -4,4 +4,7 @@ export * from "./availability";
 export * from "./cancellation";
 export * from "./recurring";
 export * from "./clientAccess";
+export * from "./onboarding";
+export * from "./invite";
+export * from "./payments";
 export { prisma } from "./db";

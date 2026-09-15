@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@system-rezerwacji/shared";
 import { approveRequest, markVisited, rejectRequest, scheduleMeeting } from "./actions";
 
@@ -37,6 +38,12 @@ export default async function OnboardingRequestsPage() {
                   {request.propertyAddress.street} {request.propertyAddress.buildingNo},{" "}
                   {request.propertyAddress.city}
                 </p>
+                <Link
+                  href={`/properties/${request.propertyAddress.id}`}
+                  className="text-xs text-emerald-700 underline"
+                >
+                  Skonfiguruj checklistę tej nieruchomości →
+                </Link>
               </div>
               <span className="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700">
                 {STATUS_LABELS[request.status]}

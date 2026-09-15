@@ -8,10 +8,14 @@ const NAV_ITEMS = [
   { href: "/service-types", label: "Rodzaje usług" },
   { href: "/pricing-rules", label: "Cennik" },
   { href: "/employees", label: "Pracownicy" },
+  { href: "/properties", label: "Nieruchomości" },
+  { href: "/checklist-catalog", label: "Katalog czynności" },
+  { href: "/checklist-packages", label: "Paczki czynności" },
+  { href: "/onboarding-requests", label: "Zapytania" },
   { href: "/settings", label: "Ustawienia" },
 ];
 
-export default async function DashboardLayout({ children }: LayoutProps<"/">) {
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await requireAdmin();
 
   return (

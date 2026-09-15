@@ -46,7 +46,10 @@ erDiagram
     CLIENT_PROFILE ||--o{ BOOKING : "zleca"
     CLIENT_PROFILE ||--o{ RECURRING_SERIES : "posiada"
     RECURRING_SERIES ||--o{ BOOKING : "generuje"
-    CHECKLIST_TEMPLATE_ITEM ||--o{ BOOKING_CHECKLIST_ITEM : "wzorzec dla"
+    CHECKLIST_TASK_CATALOG ||--o{ CHECKLIST_PACKAGE_ITEM : "należy do"
+    CHECKLIST_PACKAGE ||--o{ CHECKLIST_PACKAGE_ITEM : "zawiera"
+    PROPERTY_ADDRESS ||--o{ PROPERTY_CHECKLIST_ITEM : "ma checklistę"
+    PROPERTY_CHECKLIST_ITEM ||--o{ BOOKING_CHECKLIST_ITEM : "wzorzec dla"
     BOOKING ||--o{ BOOKING_CHECKLIST_ITEM : "zawiera"
     BOOKING ||--o| REVIEW : "może mieć"
     BOOKING ||--o| PAYMENT : "może mieć"
@@ -159,13 +162,30 @@ przedziałowa napędza jednocześnie cenę i długość okienka w kalendarzu pra
   status `ISSUE` służy osobno do ręcznego oznaczenia przez admina sytuacji spornej, np.
   pracownik się nie stawił — patrz sekcja 5 pkt 4 dla pełnej logiki zwrotu)
 
-**ChecklistTemplateItem** — jeden globalny szablon checklisty, edytowalny przez admina w
-panelu (treść pozycji, kolejność, aktywność). Przy tworzeniu `Booking` pozycje szablonu są
-kopiowane do `BookingChecklistItem` (snapshot), więc późniejsza edycja szablonu nie zmienia
-checklisty już utworzonych zleceń.
+**Checklisty — model per nieruchomość, nie jeden globalny szablon (zmiana z 2026-09-15).**
+Pierwotnie zakładano jeden globalny `ChecklistTemplateItem` dla wszystkich zleceń. Docelowo
+zakres sprzątania różni się między nieruchomościami tego samego klienta, więc checklista jest
+własnością konkretnego adresu (`PropertyAddress`), nie stałą globalną:
 
-**BookingChecklistItem** — pozycje checklisty per zlecenie (skopiowane z
-`ChecklistTemplateItem` w momencie utworzenia `Booking`) + status wykonania (checkbox).
+- **ChecklistTaskCatalog** — globalna pula możliwych czynności ("Umyj okna", "Wyczyść lodówkę"
+  itd.), edytowalna przez admina. To jest *słownik*, z którego admin wybiera — sam w sobie
+  nie jest jeszcze niczyją checklistą.
+- **ChecklistPackage** — nazwany zestaw czynności z katalogu ("paczka"), `type: STANDARD |
+  ADDITIONAL`, opcjonalnie `isDefault` (dokładnie jedna paczka STANDARD może być domyślna).
+  Paczka to **wyłącznie skrót przy konfigurowaniu checklisty nieruchomości** — kliknięcie
+  paczki dodaje jej czynności do płaskiej listy danej nieruchomości; nie ma trwałego związku
+  "ta nieruchomość używa paczki X", więc odpięcie/zmiana paczki później nie usuwa już
+  dodanych pozycji ani ich nie synchronizuje wstecznie.
+- **PropertyChecklistItem** — faktyczna, płaska checklista danej nieruchomości (`propertyAddressId`,
+  `label`, `sortOrder`, `active`). Admin konfiguruje ją w dwóch miejscach: (a) jako krok przy
+  zatwierdzaniu `OnboardingRequest` (naturalny moment, bo admin i tak jest "przy temacie" po
+  wizycie), oraz (b) w każdej chwili później w osobnym ekranie (np. gdy klient zmienia zakres
+  usługi). **Nowa nieruchomość dostaje automatycznie czynności z domyślnej paczki STANDARD**
+  w momencie jej utworzenia przez klienta — nie zaczyna pusta.
+- **BookingChecklistItem** — pozycje checklisty per zlecenie, kopiowane (snapshot) z
+  `PropertyChecklistItem` danego adresu w momencie utworzenia `Booking` + status wykonania
+  (checkbox). Późniejsza edycja checklisty nieruchomości nie zmienia checklisty już
+  utworzonych zleceń — te same zasady snapshotu co wcześniej przy globalnym szablonie.
 
 **RecurringSeries** (Seria/subskrypcja cykliczna)
 - `clientId`, `districtId`, `preferredEmployeeId` (nullable), `frequency: WEEKLY | BIWEEKLY`,
@@ -244,7 +264,11 @@ istotna zwłaszcza przy `MANUAL_ISSUE`).
 
 ### Admin
 - Zarządzanie dzielnicami, cennikiem (m² × dzielnica × rodzaj usługi, wraz z czasem trwania),
-  progiem m², globalnym szablonem checklisty (`ChecklistTemplateItem`).
+  progiem m².
+- Zarządzanie katalogiem czynności (`ChecklistTaskCatalog`) i paczkami (`ChecklistPackage`,
+  `STANDARD`/`ADDITIONAL`, jedna paczka `STANDARD` może być domyślna dla nowych nieruchomości).
+- Konfiguracja checklisty per nieruchomość (`PropertyChecklistItem`) — przy zatwierdzaniu
+  `OnboardingRequest` oraz w każdej chwili później z listy nieruchomości.
 - Zarządzanie pracownikami, ich `EmployeeAvailability` (cykliczny harmonogram per dzielnica) oraz
   `AvailabilityException` (urlopy/L4/zmiany godzin per dzień).
 - Lista `OnboardingRequest` (osobno od `QuoteRequest`) → planowanie spotkania fizycznego →
@@ -264,8 +288,8 @@ istotna zwłaszcza przy `MANUAL_ISSUE`).
 ### Pracownik
 1. Logowanie → widok "Mój dzień": lista `Booking` przypisanych na dany dzień z adresem
    (z `PropertyAddress`).
-2. Wejście w zlecenie → checklista (`BookingChecklistItem`, skopiowana z globalnego szablonu) do
-   odhaczenia.
+2. Wejście w zlecenie → checklista (`BookingChecklistItem`, skopiowana z checklisty tej
+   konkretnej nieruchomości w momencie utworzenia zlecenia) do odhaczenia.
 3. Obowiązkowe potwierdzenie wykonania (przycisk + opcjonalna notatka/zdjęcie) →
    `Booking.status = COMPLETED`. Jeśli usługa nie została wykonana, pracownik/admin oznacza
    zlecenie jako `ISSUE` zamiast `COMPLETED` — dalsza decyzja (zwrot, ponowny termin) należy do
@@ -312,8 +336,11 @@ powyżej — nie są to już otwarte pytania.
 1. **Cennik:** stawka zależy łącznie od dzielnicy, rodzaju usługi i przedziału m² (`PricingRule`).
 2. **Model płatności:** zawsze pełna kwota z góry przy standardowej rezerwacji — bez zadatków ani
    dowolnych kwot w MVP.
-3. **Checklista:** jeden globalny szablon (`ChecklistTemplateItem`), edytowalny przez admina;
-   kopiowany do konkretnego zlecenia w momencie jego utworzenia.
+3. **Checklista:** per nieruchomość (`PropertyChecklistItem`), nie jeden globalny szablon
+   (zmiana z 2026-09-15) — admin wybiera czynności z katalogu (`ChecklistTaskCatalog`),
+   opcjonalnie przez paczki-skróty (`ChecklistPackage`); nowa nieruchomość dostaje domyślną
+   paczkę STANDARD automatycznie. Kopiowana do `BookingChecklistItem` w momencie utworzenia
+   zlecenia (snapshot, jak dotąd).
 4. **Anulacja i zwrot — dwa niezależne progi, nie jedna sztywna reguła:**
    - `operationalLockWindowHours` (domyślnie 24h przed wizytą, edytowalne w Settings) — próg
      **operacyjny**: do tego momentu klient anuluje samoobsługowo w koncie, zwrot **100%

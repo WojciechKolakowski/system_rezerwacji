@@ -22,18 +22,37 @@ export async function createAddress(formData: FormData): Promise<void> {
     throw new Error("Wszystkie pola poza numerem lokalu są wymagane.");
   }
 
-  await prisma.propertyAddress.create({
-    data: {
-      clientId: clientProfile.id,
-      label,
-      districtId,
-      street,
-      buildingNo,
-      apartmentNo: apartmentNo || null,
-      postalCode,
-      city,
-      defaultSizeM2: defaultSizeM2 && Number.isFinite(defaultSizeM2) ? defaultSizeM2 : null,
-    },
+  // Nowa nieruchomość dostaje automatycznie czynności z domyślnej paczki
+  // STANDARD (ARCHITEKTURA.md sekcja 2) — nie zaczyna z pustą checklistą.
+  const defaultPackage = await prisma.checklistPackage.findFirst({
+    where: { type: "STANDARD", isDefault: true, active: true },
+    include: { items: { include: { task: true }, orderBy: { sortOrder: "asc" } } },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    const address = await tx.propertyAddress.create({
+      data: {
+        clientId: clientProfile.id,
+        label,
+        districtId,
+        street,
+        buildingNo,
+        apartmentNo: apartmentNo || null,
+        postalCode,
+        city,
+        defaultSizeM2: defaultSizeM2 && Number.isFinite(defaultSizeM2) ? defaultSizeM2 : null,
+      },
+    });
+
+    if (defaultPackage && defaultPackage.items.length > 0) {
+      await tx.propertyChecklistItem.createMany({
+        data: defaultPackage.items.map((item, index) => ({
+          propertyAddressId: address.id,
+          label: item.task.label,
+          sortOrder: index,
+        })),
+      });
+    }
   });
 
   const redirectTo = String(formData.get("redirectTo") ?? "/addresses");

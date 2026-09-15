@@ -197,6 +197,7 @@ model PropertyAddress {
   bookings           Booking[]
   recurringSeries    RecurringSeries[]
   onboardingRequests OnboardingRequest[]
+  checklistItems     PropertyChecklistItem[]
 
   @@index([clientId])
   @@index([districtId])
@@ -344,18 +345,75 @@ model Settings {
 // Zlecenia
 // ---------------------------------------------------------------------------
 
-// Jeden globalny szablon checklisty, edytowalny przez admina. Przy
-// utworzeniu Booking pozycje są kopiowane do BookingChecklistItem (snapshot),
-// więc późniejsza edycja szablonu nie zmienia checklisty istniejących zleceń.
-model ChecklistTemplateItem {
+// Checklisty są własnością konkretnej nieruchomości, nie jednym globalnym
+// szablonem (zmiana z 2026-09-15) — patrz ARCHITEKTURA.md sekcja 2.
+
+enum ChecklistPackageType {
+  STANDARD
+  ADDITIONAL
+}
+
+// Globalna pula możliwych czynności — słownik, z którego admin wybiera przy
+// konfigurowaniu checklisty konkretnej nieruchomości (bezpośrednio albo przez
+// paczkę-skrót).
+model ChecklistTaskCatalog {
   id        String   @id @default(cuid())
   label     String
-  sortOrder Int
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@map("checklist_template_items")
+  packageItems ChecklistPackageItem[]
+
+  @@map("checklist_task_catalog")
+}
+
+// Nazwany zestaw czynności z katalogu — WYŁĄCZNIE skrót przy konfigurowaniu
+// checklisty nieruchomości (patrz PropertyChecklistItem). Nie ma trwałego
+// związku "ta nieruchomość używa tej paczki" — dodanie paczki po prostu
+// kopiuje jej czynności do płaskiej listy nieruchomości.
+model ChecklistPackage {
+  id        String               @id @default(cuid())
+  name      String
+  type      ChecklistPackageType
+  // Dokładnie jedna paczka STANDARD powinna mieć isDefault=true — to ona
+  // jest automatycznie kopiowana do nowej nieruchomości przy jej utworzeniu.
+  isDefault Boolean              @default(false)
+  active    Boolean              @default(true)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  items ChecklistPackageItem[]
+
+  @@map("checklist_packages")
+}
+
+model ChecklistPackageItem {
+  id        String               @id @default(cuid())
+  packageId String
+  package   ChecklistPackage     @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  taskId    String
+  task      ChecklistTaskCatalog @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  sortOrder Int                  @default(0)
+
+  @@unique([packageId, taskId])
+  @@map("checklist_package_items")
+}
+
+// Faktyczna, płaska checklista danej nieruchomości. Niezależna od katalogu
+// po dodaniu (brak FK z powrotem) — edycja/usunięcie czynności w katalogu
+// nie zmienia już skonfigurowanych checklist nieruchomości.
+model PropertyChecklistItem {
+  id                String          @id @default(cuid())
+  propertyAddressId String
+  propertyAddress   PropertyAddress @relation(fields: [propertyAddressId], references: [id], onDelete: Cascade)
+  label             String
+  sortOrder         Int             @default(0)
+  active            Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+
+  @@index([propertyAddressId])
+  @@map("property_checklist_items")
 }
 
 model Booking {
@@ -412,7 +470,8 @@ model BookingChecklistItem {
   id          String    @id @default(cuid())
   bookingId   String
   booking     Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  // Skopiowane z ChecklistTemplateItem w momencie utworzenia Booking.
+  // Skopiowane z PropertyChecklistItem danej nieruchomości w momencie
+  // utworzenia Booking (snapshot).
   label       String
   sortOrder   Int
   completed   Boolean   @default(false)

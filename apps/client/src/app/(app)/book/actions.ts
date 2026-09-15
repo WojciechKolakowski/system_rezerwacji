@@ -122,13 +122,16 @@ export async function confirmBooking(formData: FormData): Promise<void> {
       },
     });
 
-    const templateItems = await tx.checklistTemplateItem.findMany({
-      where: { active: true },
+    // Checklista jest własnością nieruchomości, nie jednym globalnym
+    // szablonem (ARCHITEKTURA.md sekcja 2) — kopiujemy z PropertyChecklistItem
+    // tego konkretnego adresu, nie z jakiejkolwiek globalnej tabeli.
+    const propertyChecklistItems = await tx.propertyChecklistItem.findMany({
+      where: { propertyAddressId: address.id, active: true },
       orderBy: { sortOrder: "asc" },
     });
-    if (templateItems.length > 0) {
+    if (propertyChecklistItems.length > 0) {
       await tx.bookingChecklistItem.createMany({
-        data: templateItems.map((item) => ({
+        data: propertyChecklistItems.map((item) => ({
           bookingId: created.id,
           label: item.label,
           sortOrder: item.sortOrder,

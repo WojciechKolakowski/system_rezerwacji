@@ -11,7 +11,8 @@ const NAV_ITEMS = [
   { href: "/properties", label: "Nieruchomości" },
   { href: "/checklist-catalog", label: "Katalog czynności" },
   { href: "/checklist-packages", label: "Paczki czynności" },
-  { href: "/onboarding-requests", label: "Zapytania" },
+  { href: "/onboarding-requests", label: "Zapytania o współpracę" },
+  { href: "/quote-requests", label: "Wyceny" },
   { href: "/settings", label: "Ustawienia" },
 ];
 

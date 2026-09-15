@@ -2,13 +2,14 @@ import Link from "next/link";
 import { prisma } from "@system-rezerwacji/shared";
 
 export default async function DashboardPage() {
-  const [districts, serviceTypes, pricingRules, employees, onboardingRequests] =
+  const [districts, serviceTypes, pricingRules, employees, onboardingRequests, quoteRequests] =
     await Promise.all([
       prisma.district.count(),
       prisma.serviceType.count(),
       prisma.pricingRule.count(),
       prisma.employee.count(),
       prisma.onboardingRequest.count({ where: { status: { in: ["NEW", "MEETING_SCHEDULED", "VISITED"] } } }),
+      prisma.quoteRequest.count({ where: { status: { in: ["NEW", "IN_REVIEW", "QUOTED"] } } }),
     ]);
 
   const cards = [
@@ -16,7 +17,8 @@ export default async function DashboardPage() {
     { label: "Rodzaje usług", value: serviceTypes, href: "/service-types" },
     { label: "Reguły cennika", value: pricingRules, href: "/pricing-rules" },
     { label: "Pracownicy", value: employees, href: "/employees" },
-    { label: "Zapytania do obsłużenia", value: onboardingRequests, href: "/onboarding-requests" },
+    { label: "Zapytania o współpracę", value: onboardingRequests, href: "/onboarding-requests" },
+    { label: "Wyceny do obsłużenia", value: quoteRequests, href: "/quote-requests" },
   ];
 
   return (

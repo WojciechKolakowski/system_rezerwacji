@@ -323,9 +323,19 @@ skopiowaną z `PropertyChecklistItem`. Świadomie poza zakresem: konwersja zgło
 konta) — admin obsługuje je ręcznie poza systemem, dopóki nie powstanie osobny przepływ zakładania
 konta z poziomu zapytania.
 
-**Etap 3 — rezerwacje cykliczne.** Status `TRUSTED_RECURRING`, `RecurringSeries`, generator
-kolejnych zleceń (cron), opcja cykliczna w koncie klienta oraz ręczne tworzenie serii przez
-admina.
+**Etap 3 — rezerwacje cykliczne. ✅ Zrealizowany (2026-09-15).** Admin nadaje status
+`TRUSTED_RECURRING` (`/clients`, wymaga wcześniejszego `STANDARD`). Klient z tym statusem zleca
+serię samoobsługowo (`/recurring` w apps/client — bez wyboru pracownika, zawsze automatyczne
+przypisanie) albo admin tworzy ją ręcznie (`/recurring-series` w apps/admin, tu już z opcją
+wskazania konkretnego pracownika). Generator (`generateUpcomingRecurringBookings` w
+`packages/shared`) liczy cenę/czas trwania z `PricingRule`, dopasowuje wolny termin przez tę samą
+logikę dostępności co standardowa rezerwacja, i tworzy `Booking(source=RECURRING_GENERATED)` +
+`Payment` (stub) + checklistę z `PropertyChecklistItem` — idempotentnie (bezpieczne do
+wielokrotnego wywołania w tym samym oknie, nie duplikuje już wygenerowanych dat). Wystawiony jako
+`GET /api/cron/generate-recurring-bookings` (autoryzacja `CRON_SECRET`, gotowy pod Vercel Cron —
+`apps/admin/vercel.json`) oraz jako ręczny przycisk w adminie do czasu wdrożenia projektu.
+Zweryfikowany end-to-end na realnej bazie: seria co tydzień → 5 kolejnych wystąpień w oknie
+miesięcznym → drugie uruchomienie generatora tworzy 0 nowych (idempotencja potwierdzona).
 
 **Etap 4 — oceny i powiadomienia.** `Review` po stronie klienta + podgląd ocen w adminie;
 moduł powiadomień e-mail/SMS (potwierdzenia, przypomnienia przed wizytą).

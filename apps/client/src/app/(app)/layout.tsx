@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { canBookStandard } from "@system-rezerwacji/shared";
+import { canBookStandard, canBookRecurring } from "@system-rezerwacji/shared";
 import { requireClientProfile } from "@/lib/authGuard";
 import { logout } from "./logout-action";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { session, clientProfile } = await requireClientProfile();
   const canBook = canBookStandard(clientProfile.status);
+  const canRecurring = canBookRecurring(clientProfile.status);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -38,6 +39,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               Zlecenia
             </Link>
           </>
+        )}
+        {canRecurring && (
+          <Link href="/recurring" className="text-gray-700">
+            Cyklicznie
+          </Link>
         )}
         {!canBook && (
           <Link href="/onboarding" className="text-gray-700">

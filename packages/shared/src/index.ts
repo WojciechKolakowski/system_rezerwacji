@@ -7,4 +7,5 @@ export * from "./clientAccess";
 export * from "./onboarding";
 export * from "./invite";
 export * from "./payments";
+export * from "./recurringGeneration";
 export { prisma } from "./db";

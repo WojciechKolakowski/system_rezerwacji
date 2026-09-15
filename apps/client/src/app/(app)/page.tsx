@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { prisma } from "@system-rezerwacji/shared";
-import { canBookStandard } from "@system-rezerwacji/shared";
+import { prisma, canBookStandard, canBookRecurring } from "@system-rezerwacji/shared";
 import { requireClientProfile } from "@/lib/authGuard";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -12,6 +11,7 @@ const STATUS_LABELS: Record<string, string> = {
 export default async function HomePage() {
   const { clientProfile } = await requireClientProfile();
   const canBook = canBookStandard(clientProfile.status);
+  const canRecurring = canBookRecurring(clientProfile.status);
 
   const upcomingBookings = canBook
     ? await prisma.booking.findMany({
@@ -50,6 +50,15 @@ export default async function HomePage() {
           >
             Zamów sprzątanie →
           </Link>
+
+          {canRecurring && (
+            <Link
+              href="/recurring"
+              className="rounded-lg border border-emerald-600 p-4 text-center text-sm font-medium text-emerald-700 active:bg-emerald-50"
+            >
+              Zleć sprzątanie cykliczne →
+            </Link>
+          )}
 
           <div>
             <div className="mb-2 flex items-center justify-between">

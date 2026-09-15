@@ -48,7 +48,7 @@ function isSameDay(a: Date, b: Date): boolean {
 // Epoka 1970-01-01 leży w zimie, więc odczyt przez lokalne getHours()
 // zastosowałby błędny (zimowy) offset strefy czasowej serwera i przesunąłby
 // godzinę — stąd wyłącznie UTC, niezależnie od strefy czasowej hosta.
-function combineDateAndTime(date: Date, time: Date): Date {
+export function combineDateAndTime(date: Date, time: Date): Date {
   const result = new Date(date);
   result.setHours(time.getUTCHours(), time.getUTCMinutes(), 0, 0);
   return result;

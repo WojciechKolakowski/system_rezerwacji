@@ -42,9 +42,15 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
+// `time` reprezentuje samą godzinę (bez daty, @db.Time) — konwencja w całym
+// systemie to zapis/odczyt takich wartości WYŁĄCZNIE przez metody UTC
+// (Date.UTC przy tworzeniu, getUTCHours/getUTCMinutes przy odczycie).
+// Epoka 1970-01-01 leży w zimie, więc odczyt przez lokalne getHours()
+// zastosowałby błędny (zimowy) offset strefy czasowej serwera i przesunąłby
+// godzinę — stąd wyłącznie UTC, niezależnie od strefy czasowej hosta.
 function combineDateAndTime(date: Date, time: Date): Date {
   const result = new Date(date);
-  result.setHours(time.getHours(), time.getMinutes(), 0, 0);
+  result.setHours(time.getUTCHours(), time.getUTCMinutes(), 0, 0);
   return result;
 }
 

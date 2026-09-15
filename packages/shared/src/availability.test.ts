@@ -5,8 +5,11 @@ import {
   type AvailableSlot,
 } from "./availability";
 
+// Konwencja czasu-bez-daty w całym systemie to UTC (patrz komentarz przy
+// combineDateAndTime w availability.ts) — testy muszą używać tej samej
+// konwencji co produkcyjny kod zapisujący/odczytujący z Prisma.
 function time(hours: number, minutes = 0): Date {
-  return new Date(1970, 0, 1, hours, minutes);
+  return new Date(Date.UTC(1970, 0, 1, hours, minutes));
 }
 
 const WEDNESDAY = new Date(2026, 0, 7); // 2026-01-07 to środa (dzień tygodnia = 3)

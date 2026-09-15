@@ -6,10 +6,17 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "npm run test --workspace=packages/shared"
+    "test": "npm run test --workspace=packages/shared",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "devDependencies": {
     "@prisma/client": "^6.19.3",
-    "prisma": "^6.19.3"
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^2.4.3",
+    "prisma": "^6.19.3",
+    "tsx": "^4.19.2"
   }
 }

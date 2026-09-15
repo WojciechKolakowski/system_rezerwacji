@@ -5,6 +5,8 @@ import {
   assertMeetingDateIsFuture,
   assertValidOnboardingTransition,
   buildClientApprovalUpdate,
+  notifyOnboardingApproved,
+  notifyOnboardingRejected,
 } from "@system-rezerwacji/shared";
 import { requireAdmin } from "@/lib/authGuard";
 import { revalidatePath } from "next/cache";
@@ -65,6 +67,8 @@ export async function approveRequest(formData: FormData): Promise<void> {
     prisma.clientProfile.update({ where: { id: request.clientId }, data: clientUpdate }),
   ]);
 
+  await notifyOnboardingApproved(request.id);
+
   revalidatePath("/onboarding-requests");
 }
 
@@ -86,6 +90,8 @@ export async function rejectRequest(formData: FormData): Promise<void> {
       approvedById: admin.userId,
     },
   });
+
+  await notifyOnboardingRejected(request.id);
 
   revalidatePath("/onboarding-requests");
 }

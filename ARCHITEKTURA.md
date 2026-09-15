@@ -337,8 +337,20 @@ wielokrotnego wywołania w tym samym oknie, nie duplikuje już wygenerowanych da
 Zweryfikowany end-to-end na realnej bazie: seria co tydzień → 5 kolejnych wystąpień w oknie
 miesięcznym → drugie uruchomienie generatora tworzy 0 nowych (idempotencja potwierdzona).
 
-**Etap 4 — oceny i powiadomienia.** `Review` po stronie klienta + podgląd ocen w adminie;
-moduł powiadomień e-mail/SMS (potwierdzenia, przypomnienia przed wizytą).
+**Etap 4 — oceny i powiadomienia. ✅ Zrealizowany (2026-09-15), e-mail; SMS świadomie odłożony.**
+Klient ocenia (1–5 + komentarz) zrealizowane zlecenie w `/bookings`; admin widzi wszystkie oceny
++ średnią w `/reviews`. Moduł powiadomień (`packages/shared/notifications.ts`) obsługuje:
+potwierdzenie rezerwacji, anulowanie, przypomnienie przed wizytą, zatwierdzenie/odrzucenie
+zapytania o współpracę, gotową wycenę — wpięte we wszystkie miejsca, gdzie te zdarzenia
+faktycznie zachodzą (standardowa rezerwacja, konwersja wyceny, generator cykliczny, akcje
+onboardingu). **Świadomy stub**: dostawca e-mail (np. Resend) nie jest jeszcze wybrany, więc
+"wysyłka" zapisuje `NotificationLog` (podgląd w adminie: `/notifications`) zamiast faktycznie
+wysyłać — podmiana jednej funkcji (`sendNotificationStub`) na prawdziwego dostawcę nie wymaga
+zmian nigdzie indziej. Przypomnienia wysyłane przez `GET /api/cron/send-booking-reminders`
+(codziennie, okno 20–28h przed wizytą — złapie każde jutrzejsze zlecenie niezależnie o której
+cron faktycznie odpali), idempotentnie (sprawdza istniejący wpis `NotificationLog` per zlecenie).
+Integracja SMS-ów świadomie odłożona na później (decyzja użytkownika) — model już to przewiduje
+(`ClientProfile.marketingSmsConsent`), ale bez implementacji na tym etapie.
 
 **Etap 5 — rozszerzenia.** Moduł faktur z płatnością BLIK dla stałych klientów o ustalonej
 indywidualnej cenie; dopracowanie PWA panelu pracownika; kolejne miasta/dzielnice.

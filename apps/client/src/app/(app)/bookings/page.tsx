@@ -1,7 +1,7 @@
 import { prisma } from "@system-rezerwacji/shared";
 import { determineCancellationOutcome } from "@system-rezerwacji/shared";
 import { requireClientProfile } from "@/lib/authGuard";
-import { cancelBooking } from "./actions";
+import { cancelBooking, submitReview } from "./actions";
 
 const STATUS_LABELS: Record<string, string> = {
   PENDING: "Oczekujące",
@@ -22,7 +22,7 @@ export default async function BookingsPage({
   const [bookings, settings] = await Promise.all([
     prisma.booking.findMany({
       where: { clientId: clientProfile.id },
-      include: { propertyAddress: true, serviceType: true },
+      include: { propertyAddress: true, serviceType: true, review: true },
       orderBy: { scheduledStart: "desc" },
     }),
     prisma.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } }),
@@ -85,6 +85,46 @@ export default async function BookingsPage({
                     samodzielna anulacja online nie jest już możliwa. Aby odwołać usługę, skontaktuj
                     się z administratorem.
                   </p>
+                )}
+              </div>
+            )}
+
+            {booking.status === "COMPLETED" && (
+              <div className="mt-3 border-t border-gray-100 pt-3">
+                {booking.review ? (
+                  <div>
+                    <p className="text-sm font-semibold text-amber-600">
+                      {"★".repeat(booking.review.rating)}
+                      {"☆".repeat(5 - booking.review.rating)}
+                    </p>
+                    {booking.review.comment && (
+                      <p className="mt-1 text-sm text-gray-600">{booking.review.comment}</p>
+                    )}
+                  </div>
+                ) : (
+                  <form action={submitReview} className="flex flex-col gap-2">
+                    <input type="hidden" name="bookingId" value={booking.id} />
+                    <label className="text-xs text-gray-600">Oceń tę usługę</label>
+                    <select name="rating" required className="rounded-md border border-gray-300 px-3 py-2 text-sm">
+                      <option value="5">★★★★★ (5)</option>
+                      <option value="4">★★★★☆ (4)</option>
+                      <option value="3">★★★☆☆ (3)</option>
+                      <option value="2">★★☆☆☆ (2)</option>
+                      <option value="1">★☆☆☆☆ (1)</option>
+                    </select>
+                    <textarea
+                      name="comment"
+                      rows={2}
+                      placeholder="Komentarz (opcjonalnie)"
+                      className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+                    />
+                    <button
+                      type="submit"
+                      className="self-start rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white active:bg-emerald-700"
+                    >
+                      Wyślij ocenę
+                    </button>
+                  </form>
                 )}
               </div>
             )}

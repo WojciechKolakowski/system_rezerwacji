@@ -2,6 +2,7 @@ import { prisma } from "./db";
 import { NoMatchingPricingRuleError, resolvePrice } from "./pricing";
 import { combineDateAndTime, computeAvailableSlots, groupSlotsByStartTime } from "./availability";
 import { computeGenerationWindow, generateOccurrenceDates, nextOccurrenceOnOrAfter } from "./recurring";
+import { notifyBookingConfirmed } from "./notifications";
 
 export interface RecurringGenerationSkip {
   seriesId: string;
@@ -143,7 +144,7 @@ export async function generateUpcomingRecurringBookings(
       const scheduledStart = desiredStart;
       const scheduledEnd = new Date(scheduledStart.getTime() + priceInfo.durationMinutes * 60 * 1000);
 
-      await prisma.$transaction(async (tx) => {
+      const createdBookingId = await prisma.$transaction(async (tx) => {
         const booking = await tx.booking.create({
           data: {
             clientId: series.clientId,
@@ -188,7 +189,11 @@ export async function generateUpcomingRecurringBookings(
             })),
           });
         }
+
+        return booking.id;
       });
+
+      await notifyBookingConfirmed(createdBookingId);
 
       result.bookingsCreated += 1;
     }

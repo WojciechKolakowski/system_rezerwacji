@@ -1,7 +1,11 @@
 "use server";
 
 import { prisma } from "@system-rezerwacji/shared";
-import { determineCancellationOutcome, computeRefundAmountMinor } from "@system-rezerwacji/shared";
+import {
+  determineCancellationOutcome,
+  computeRefundAmountMinor,
+  notifyBookingCancelled,
+} from "@system-rezerwacji/shared";
 import { requireClientProfile } from "@/lib/authGuard";
 import { revalidatePath } from "next/cache";
 
@@ -63,6 +67,35 @@ export async function cancelBooking(formData: FormData): Promise<void> {
         },
       });
     }
+  });
+
+  await notifyBookingCancelled(booking.id);
+
+  revalidatePath("/bookings");
+}
+
+export async function submitReview(formData: FormData): Promise<void> {
+  const { clientProfile } = await requireClientProfile();
+
+  const bookingId = String(formData.get("bookingId") ?? "");
+  const rating = Number(formData.get("rating"));
+  const comment = String(formData.get("comment") ?? "").trim();
+
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    throw new Error("Ocena musi być liczbą od 1 do 5.");
+  }
+
+  const booking = await prisma.booking.findFirstOrThrow({
+    where: { id: bookingId, clientId: clientProfile.id },
+  });
+  if (booking.status !== "COMPLETED") {
+    throw new Error("Ocenę można wystawić tylko dla zrealizowanego zlecenia.");
+  }
+
+  await prisma.review.upsert({
+    where: { bookingId: booking.id },
+    update: { rating, comment: comment || null },
+    create: { bookingId: booking.id, clientId: clientProfile.id, rating, comment: comment || null },
   });
 
   revalidatePath("/bookings");

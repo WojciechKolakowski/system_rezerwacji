@@ -8,4 +8,5 @@ export * from "./onboarding";
 export * from "./invite";
 export * from "./payments";
 export * from "./recurringGeneration";
+export * from "./notifications";
 export { prisma } from "./db";

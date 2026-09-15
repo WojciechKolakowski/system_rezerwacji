@@ -15,6 +15,8 @@ const NAV_ITEMS = [
   { href: "/checklist-packages", label: "Paczki czynności" },
   { href: "/onboarding-requests", label: "Zapytania o współpracę" },
   { href: "/quote-requests", label: "Wyceny" },
+  { href: "/reviews", label: "Oceny" },
+  { href: "/notifications", label: "Dziennik powiadomień" },
   { href: "/settings", label: "Ustawienia" },
 ];
 

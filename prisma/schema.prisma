@@ -138,6 +138,7 @@ model User {
   verifiedClientProfiles    ClientProfile[]     @relation("ClientProfileVerifier")
   conductedOnboardingVisits OnboardingRequest[] @relation("OnboardingConductor")
   approvedOnboardingReviews OnboardingRequest[] @relation("OnboardingApprover")
+  notificationLogs          NotificationLog[]
 
   @@map("users")
 }
@@ -454,10 +455,11 @@ model Booking {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  checklistItems BookingChecklistItem[]
-  review         Review?
-  payments       Payment[]
-  quoteRequest   QuoteRequest?
+  checklistItems   BookingChecklistItem[]
+  review           Review?
+  payments         Payment[]
+  quoteRequest     QuoteRequest?
+  notificationLogs NotificationLog[]
 
   @@index([clientId])
   @@index([employeeId])
@@ -614,7 +616,51 @@ model Review {
   rating    Int
   comment   String?
   createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
 
   @@index([clientId])
   @@map("reviews")
+}
+
+// ---------------------------------------------------------------------------
+// Powiadomienia
+// ---------------------------------------------------------------------------
+
+enum NotificationType {
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  BOOKING_REMINDER
+  ONBOARDING_APPROVED
+  ONBOARDING_REJECTED
+  QUOTE_READY
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+}
+
+// Dziennik powiadomień e-mail. Świadomy stub (patrz ARCHITEKTURA.md sekcja
+// 5 pkt 11/13 i packages/shared/notifications.ts) — dopóki nie wybrano
+// dostawcy (np. Resend), "wysyłka" to zapis tego rekordu (zawsze
+// status=SENT) + log na konsoli, żeby cała logika wyzwalania powiadomień
+// była gotowa i przetestowana, zanim podłączymy prawdziwy provider. Służy
+// też jako źródło idempotencji dla przypomnień przed wizytą (nie wysyłamy
+// drugi raz przypomnienia dla tego samego Booking).
+model NotificationLog {
+  id             String             @id @default(cuid())
+  type           NotificationType
+  recipientEmail String
+  userId         String?
+  user           User?              @relation(fields: [userId], references: [id])
+  subject        String
+  body           String
+  bookingId      String?
+  booking        Booking?           @relation(fields: [bookingId], references: [id])
+  status         NotificationStatus @default(SENT)
+  createdAt      DateTime           @default(now())
+
+  @@index([bookingId, type])
+  @@index([userId])
+  @@map("notification_logs")
 }

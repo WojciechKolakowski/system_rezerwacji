@@ -1,6 +1,6 @@
 "use server";
 
-import { prisma } from "@system-rezerwacji/shared";
+import { prisma, notifyBookingConfirmed, notifyQuoteReady } from "@system-rezerwacji/shared";
 import { requireAdmin } from "@/lib/authGuard";
 import { revalidatePath } from "next/cache";
 
@@ -32,6 +32,7 @@ export async function setQuote(formData: FormData): Promise<void> {
   }
 
   await prisma.quoteRequest.update({ where: { id }, data: { status: "QUOTED", quotedPrice } });
+  await notifyQuoteReady(id);
   revalidatePath("/quote-requests");
 }
 
@@ -86,7 +87,7 @@ export async function convertQuoteToBooking(formData: FormData): Promise<void> {
   const scheduledStart = new Date(scheduledStartRaw);
   const scheduledEnd = new Date(scheduledStart.getTime() + durationMinutes * 60 * 1000);
 
-  await prisma.$transaction(async (tx) => {
+  const createdBookingId = await prisma.$transaction(async (tx) => {
     const booking = await tx.booking.create({
       data: {
         clientId: request.clientId!,
@@ -133,7 +134,11 @@ export async function convertQuoteToBooking(formData: FormData): Promise<void> {
       where: { id: request.id },
       data: { status: "CONVERTED", convertedBookingId: booking.id },
     });
+
+    return booking.id;
   });
+
+  await notifyBookingConfirmed(createdBookingId);
 
   revalidatePath("/quote-requests");
 }

@@ -6,6 +6,7 @@ import {
   computeAvailableSlots,
   exceedsIndividualQuoteThreshold,
   groupSlotsByStartTime,
+  notifyBookingConfirmed,
   resolvePrice,
 } from "@system-rezerwacji/shared";
 import { requireClientProfile } from "@/lib/authGuard";
@@ -141,6 +142,8 @@ export async function confirmBooking(formData: FormData): Promise<void> {
 
     return created;
   });
+
+  await notifyBookingConfirmed(booking.id);
 
   redirect(`/bookings?confirmed=${booking.id}`);
 }

@@ -17,8 +17,16 @@ interface SearchParams {
   date?: string;
 }
 
+// Lokalna ekstrakcja daty, nie UTC — przez ~1-2h po lokalnej północy w
+// Polsce UTC wciąż wskazuje poprzedni dzień, więc toISOString().slice(0,10)
+// pokazywałby wczorajszą datę jako "dziś" (ten sam rodzaj błędu co w
+// apps/worker, patrz komentarz tam).
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 export default async function BookPage({

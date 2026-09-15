@@ -313,8 +313,15 @@ Admin: lista `OnboardingRequest` z planowaniem spotkań i notatkami, podgląd zl
 Weryfikacja klienta musi wejść już tutaj, a nie w późniejszym etapie — bez niej nikt nowy nie
 może w ogóle skorzystać ze ścieżki standardowej.
 
-**Etap 2 — indywidualna wycena.** Formularz `QuoteRequest` po stronie klienta + panel obsługi
-zapytań i konwersji do zlecenia po stronie admina.
+**Etap 2 — indywidualna wycena. ✅ Zrealizowany (2026-09-15).** Formularz `QuoteRequest` po
+stronie klienta (`/quote-request`, dostępny bez logowania) + panel obsługi w adminie
+(`/quote-requests`: NEW → IN_REVIEW → QUOTED → CONVERTED/REJECTED). Konwersja tworzy pełny
+`Booking` (admin ręcznie wybiera adres klienta, rodzaj usługi, pracownika i termin — bez
+automatycznego dopasowania, bo to niestandardowe zlecenia bez pasującej `PricingRule`) +
+`Payment` (`PENDING`, `MANUAL_QUOTE` — do czasu wyboru dostawcy płatności) + checklistę
+skopiowaną z `PropertyChecklistItem`. Świadomie poza zakresem: konwersja zgłoszeń gości (bez
+konta) — admin obsługuje je ręcznie poza systemem, dopóki nie powstanie osobny przepływ zakładania
+konta z poziomu zapytania.
 
 **Etap 3 — rezerwacje cykliczne.** Status `TRUSTED_RECURRING`, `RecurringSeries`, generator
 kolejnych zleceń (cron), opcja cykliczna w koncie klienta oraz ręczne tworzenie serii przez
